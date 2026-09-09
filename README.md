@@ -163,7 +163,7 @@ TUDO_BEM_SIM;MODO=LOTE;CTRL=GBN;TAM_TEXTO=100;JANELA=5
 Também podem ser testados valores inválidos de modo, controle e tamanhos menores que `30`, que devem resultar em `RECUSADO`.
 
 ### Relatório/ Diário de Aprendizagem Uso de IA⬇️ :
-[![Read the Docs](https://docs.google.com/document/d/15zSdHppBRYHB8-EuIskW2odFl35smm78s4MK0QK3myk/edit?tab=t.to6ynmibpxae)
+[![Read the Docs](https://img.shields.io/badge/Read%20the%20Docs-%23000000.svg?style=for-the-badge&logo=readthedocs&logoColor=white)](https://docs.google.com/document/d/15zSdHppBRYHB8-EuIskW2odFl35smm78s4MK0QK3myk/edit?tab=t.to6ynmibpxae)
 
 ### Caso deseje saber mais sobre a implementação de forma *Técnica* acesse o documento abaixo ⬇️ :
 [![Read the Docs](https://img.shields.io/badge/Read%20the%20Docs-%23000000.svg?style=for-the-badge&logo=readthedocs&logoColor=white)](https://docs.google.com/document/d/12iL8a6ONzk0YM9PACcytHFAVXDBGYF2RQswipV-NIGY/edit?usp=sharing)
