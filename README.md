@@ -2,6 +2,18 @@
 
 Aplicação cliente-servidor desenvolvida em Python utilizando **sockets UDP**.
 
+## Grupo:
+* Arthur da Fonte
+* Arthur Reis
+* Bruno Santana
+* Hugo Diego
+* Lucas Samuel
+* Matheus Freire
+* Matheus Fialho
+* Miguel Tojal
+* Pablo Coelho
+* Raul Maia
+* Vitor Gadelha
 
 ## Como executar
 
