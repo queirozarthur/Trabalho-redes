@@ -1,5 +1,6 @@
 SEPARADOR = ";"
 IGUAL = "="
+SEPARADOR_PAYLOAD = "|"
 
 def montar(tipo, campos):
     partes = [tipo]
@@ -15,3 +16,11 @@ def desmontar(mensagem):
         chave, valor = parte.split(IGUAL, 1)
         campos[chave] = valor
     return tipo, campos
+
+def montar_pacote(tipo, campos, payload=""):
+    return montar(tipo, campos) + SEPARADOR_PAYLOAD + payload
+
+def desmontar_pacote(pacote):
+    cabecalho, payload = pacote.split(SEPARADOR_PAYLOAD, 1)
+    tipo, campos = desmontar(cabecalho)
+    return tipo, campos, payload
