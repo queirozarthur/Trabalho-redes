@@ -1,6 +1,7 @@
 import socket
-from config import ENDERECO_SERVIDOR, BUFFER_SIZE, TAM_TEXTO_MIN
-from protocolo_mensagem import montar, desmontar
+
+from config import BUFFER_SIZE, ENDERECO_SERVIDOR, TAM_TEXTO_MIN
+from protocolo_mensagem import desmontar, montar
 
 modo = input("Modo (INDIVIDUAL/LOTE): ").strip().upper()
 controle = input("Controle (GBN/SR): ").strip().upper()  # Go-Back-N ou Repeticao Seletiva
