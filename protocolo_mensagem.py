@@ -24,3 +24,6 @@ def desmontar_pacote(pacote):
     cabecalho, payload = pacote.split(SEPARADOR_PAYLOAD, 1)
     tipo, campos = desmontar(cabecalho)
     return tipo, campos, payload
+
+def fragmentar(texto, tamanho):
+    return [texto[i:i + tamanho] for i in range(0, len(texto), tamanho)]
