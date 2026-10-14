@@ -47,14 +47,24 @@ if aceito:
 
     while True:
         dados, endereco = sock_servidor.recvfrom(BUFFER_SIZE)
-        tipo, campos, payload = desmontar_pacote(dados.decode())
+
+        try:
+            tipo, campos, payload = desmontar_pacote(dados.decode())
+        except (KeyError, ValueError) as erro:
+            print(f"Pacote veio estranho, ignorando: {erro}")
+            continue
 
         if tipo == TIPO_FIM:
             break
 
         if tipo == TIPO_DADOS:
-            seq = int(campos["SEQ"])
-            checksum = int(campos["CHK"])
+            try:
+                seq = int(campos["SEQ"])
+                checksum = int(campos["CHK"])
+            except (KeyError, ValueError) as erro:
+                print(f"Pacote DADOS sem SEQ/CHK valido, ignorando: {erro}")
+                continue
+
             integro = checksum_valido(payload, checksum)
 
             status = "OK" if integro else "CORROMPIDO"

@@ -84,8 +84,12 @@ if tipo == "TUDO_BEM_SIM":
             pendentes[seq] = fragmentos[seq]
 
         while len(pendentes) > 0:
-            tipo, campos = receber_ack(sock_cliente)
-            seq_confirmado = int(campos["SEQ"])
+            try:
+                tipo, campos = receber_ack(sock_cliente)
+                seq_confirmado = int(campos["SEQ"])
+            except (KeyError, ValueError) as erro:
+                print(f"Confirmacao veio estranha, ignorando: {erro}")
+                continue
 
             if seq_confirmado in pendentes:
                 del pendentes[seq_confirmado]
