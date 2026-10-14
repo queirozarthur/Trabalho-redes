@@ -72,9 +72,9 @@ if aceito:
 
             if integro:
                 recebidos[seq] = payload
-                confirmacao = montar_pacote(TIPO_ACK, {"SEQ": seq})
+                confirmacao = montar_pacote(TIPO_ACK, {"SEQ": seq, "JANELA": JANELA_DEFAULT})
             else:
-                confirmacao = montar_pacote(TIPO_NACK, {"SEQ": seq})
+                confirmacao = montar_pacote(TIPO_NACK, {"SEQ": seq, "JANELA": JANELA_DEFAULT})
 
             sock_servidor.sendto(confirmacao.encode(), endereco)
             print(f"Enviado: {confirmacao}")
