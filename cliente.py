@@ -1,10 +1,26 @@
 import socket
 
-from config import BUFFER_SIZE, ENDERECO_SERVIDOR, TAM_TEXTO_MIN, PAYLOAD_MAX
-from protocolo_mensagem import desmontar, montar, fragmentar
+from checksum import calcular_checksum
+from config import BUFFER_SIZE, ENDERECO_SERVIDOR, TAM_TEXTO_MIN, PAYLOAD_MAX, TIMEOUT, TIPO_DADOS, TIPO_FIM
+from protocolo_mensagem import desmontar, montar, fragmentar, montar_pacote, desmontar_pacote
+
+
+def enviar_dados(sock, seq, payload):
+    chk = calcular_checksum(payload)
+    pacote = montar_pacote(TIPO_DADOS, {"SEQ": seq, "CHK": chk}, payload)
+    sock.sendto(pacote.encode(), ENDERECO_SERVIDOR)
+    print(f"[DADOS] SEQ={seq} CHK={chk} PAYLOAD={payload!r}")
+
+
+def receber_ack(sock):
+    dados, _ = sock.recvfrom(BUFFER_SIZE)
+    tipo, campos, _ = desmontar_pacote(dados.decode())
+    print(f"[{tipo}] {campos}")
+    return tipo, campos
+
 
 modo = input("Modo (INDIVIDUAL/LOTE): ").strip().upper()
-controle = input("Controle (GBN/SR): ").strip().upper()  # Go-Back-N ou Repeticao Seletiva
+controle = input("Controle (GBN/SR): ").strip().upper()  
 tam_texto = int(input("Tamanho do texto: "))
 
 if tam_texto < TAM_TEXTO_MIN:
@@ -44,10 +60,22 @@ if tipo == "TUDO_BEM_SIM":
             break
 
     fragmentos = fragmentar(texto, PAYLOAD_MAX)
+    print(f"Texto dividido em {len(fragmentos)} fragmentos")
 
-    print(f"Texto dividido em {len(fragmentos)} fragmentos:")
-    for sequencia, payload in enumerate(fragmentos):
-        print(f"SEQ={sequencia} | TAM={len(payload)} | PAYLOAD={payload!r}")
+    sock_cliente.settimeout(TIMEOUT)
+
+    tam_lote = 1 if modo == "INDIVIDUAL" else janela
+
+    for inicio in range(0, len(fragmentos), tam_lote):
+        lote = range(inicio, min(inicio + tam_lote, len(fragmentos)))
+        for seq in lote:
+            enviar_dados(sock_cliente, seq, fragmentos[seq])
+        for _ in lote:
+            receber_ack(sock_cliente)
+
+    fim = montar_pacote(TIPO_FIM, {"TOTAL": len(fragmentos)})
+    sock_cliente.sendto(fim.encode(), ENDERECO_SERVIDOR)
+    print(f"[FIM] TOTAL={len(fragmentos)}")
 else:
     print(f"Conexao recusada. Motivo: {campos['MOTIVO']}")
 

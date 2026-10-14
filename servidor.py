@@ -54,7 +54,7 @@ if aceito:
 
         if tipo == TIPO_DADOS:
             seq = int(campos["SEQ"])
-            checksum = int(campos["CHECKSUM"])
+            checksum = int(campos["CHK"])
             integro = checksum_valido(payload, checksum)
 
             status = "OK" if integro else "CORROMPIDO"
