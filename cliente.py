@@ -66,12 +66,29 @@ if tipo == "TUDO_BEM_SIM":
 
     tam_lote = 1 if modo == "INDIVIDUAL" else janela
 
+    ack_cumulativo = (controle == "GBN")
+
+    if ack_cumulativo == True:
+        print("Controle ativo: GBN")
+        print("isso quer dizer que se der erro, a ideia e reenviar a janela inteira (ainda nao implementado)")
+    else:
+        print("Controle ativo: SR")
+        print("isso quer dizer que se der erro, a ideia e reenviar so o pacote que deu problema (ainda nao implementado)")
+
     for inicio in range(0, len(fragmentos), tam_lote):
         lote = range(inicio, min(inicio + tam_lote, len(fragmentos)))
+
+        pendentes = {}
         for seq in lote:
             enviar_dados(sock_cliente, seq, fragmentos[seq])
-        for _ in lote:
-            receber_ack(sock_cliente)
+            pendentes[seq] = fragmentos[seq]
+
+        while len(pendentes) > 0:
+            tipo, campos = receber_ack(sock_cliente)
+            seq_confirmado = int(campos["SEQ"])
+
+            if seq_confirmado in pendentes:
+                del pendentes[seq_confirmado]
 
     fim = montar_pacote(TIPO_FIM, {"TOTAL": len(fragmentos)})
     sock_cliente.sendto(fim.encode(), ENDERECO_SERVIDOR)
