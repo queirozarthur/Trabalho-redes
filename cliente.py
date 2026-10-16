@@ -1,7 +1,7 @@
 import socket
 
 from checksum import calcular_checksum
-from config import BUFFER_SIZE, ENDERECO_SERVIDOR, TAM_TEXTO_MIN, PAYLOAD_MAX, TIMEOUT, TIPO_DADOS, TIPO_FIM
+from config import BUFFER_SIZE, ENDERECO_SERVIDOR, TAM_TEXTO_MIN, PAYLOAD_MAX, TIMEOUT, TIPO_DADOS, TIPO_ACK, TIPO_FIM
 from protocolo_mensagem import desmontar, montar, fragmentar, montar_pacote, desmontar_pacote
 
 
@@ -64,35 +64,48 @@ if tipo == "TUDO_BEM_SIM":
 
     sock_cliente.settimeout(TIMEOUT)
 
-    tam_lote = 1 if modo == "INDIVIDUAL" else janela
-
     ack_cumulativo = (controle == "GBN")
 
-    if ack_cumulativo == True:
-        print("Controle ativo: GBN")
-        print("isso quer dizer que se der erro, a ideia e reenviar a janela inteira (ainda nao implementado)")
+    if ack_cumulativo:
+        print("Controle ativo: GBN (servidor confirma em grupo, ACK cumulativo)")
     else:
-        print("Controle ativo: SR")
-        print("isso quer dizer que se der erro, a ideia e reenviar so o pacote que deu problema (ainda nao implementado)")
+        print("Controle ativo: SR (servidor confirma cada pacote individualmente)")
 
-    for inicio in range(0, len(fragmentos), tam_lote):
-        lote = range(inicio, min(inicio + tam_lote, len(fragmentos)))
+    base = 0
+    proximo = 0
+    confirmados = set() 
 
-        pendentes = {}
-        for seq in lote:
-            enviar_dados(sock_cliente, seq, fragmentos[seq])
-            pendentes[seq] = fragmentos[seq]
+    while base < len(fragmentos):
+        tam_janela = 1 if modo == "INDIVIDUAL" else janela
 
-        while len(pendentes) > 0:
-            try:
-                tipo, campos = receber_ack(sock_cliente)
-                seq_confirmado = int(campos["SEQ"])
-            except (KeyError, ValueError) as erro:
-                print(f"Confirmacao veio estranha, ignorando: {erro}")
-                continue
+        while proximo < len(fragmentos) and proximo < base + tam_janela:
+            enviar_dados(sock_cliente, proximo, fragmentos[proximo])
+            proximo += 1
 
-            if seq_confirmado in pendentes:
-                del pendentes[seq_confirmado]
+        try:
+            tipo, campos = receber_ack(sock_cliente)
+            seq_confirmado = int(campos["SEQ"])
+            janela = max(1, min(5, int(campos["JANELA"]))) 
+        except socket.timeout:
+            print(f"[TIMEOUT] nenhuma confirmacao em {TIMEOUT}s (retransmissao fica para o CP3)")
+            continue
+        except (KeyError, ValueError) as erro:
+            print(f"Confirmacao veio estranha, ignorando: {erro}")
+            continue
+
+        if tipo != TIPO_ACK:
+            print(f"SEQ={seq_confirmado} nao confirmado (retransmissao fica para o CP3)")
+            continue
+
+        if ack_cumulativo:
+            if seq_confirmado >= base:
+                base = seq_confirmado + 1
+        else:
+            confirmados.add(seq_confirmado)
+            while base in confirmados:
+                base += 1
+
+        print(f"Janela: base={base} proximo={proximo} tamanho={tam_janela}")
 
     fim = montar_pacote(TIPO_FIM, {"TOTAL": len(fragmentos)})
     sock_cliente.sendto(fim.encode(), ENDERECO_SERVIDOR)

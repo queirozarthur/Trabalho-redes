@@ -44,6 +44,7 @@ print(f"Respondido: {resposta}")
 
 if aceito:
     recebidos = {}
+    esperado = 0 
 
     while True:
         dados, endereco = sock_servidor.recvfrom(BUFFER_SIZE)
@@ -70,11 +71,24 @@ if aceito:
             status = "OK" if integro else "CORROMPIDO"
             print(f"[DADOS] SEQ={seq} CHECKSUM={checksum} PAYLOAD={payload!r} {status}")
 
-            if integro:
-                recebidos[seq] = payload
-                confirmacao = montar_pacote(TIPO_ACK, {"SEQ": seq, "JANELA": JANELA_DEFAULT})
-            else:
+            if not integro:
                 confirmacao = montar_pacote(TIPO_NACK, {"SEQ": seq, "JANELA": JANELA_DEFAULT})
+            elif controle == "GBN":
+                if seq == esperado:
+                    recebidos[seq] = payload
+                    esperado += 1
+                else:
+                    print(f"Fora de ordem (esperado SEQ={esperado}), descartado")
+                confirmacao = montar_pacote(TIPO_ACK, {"SEQ": esperado - 1, "JANELA": JANELA_DEFAULT})
+            else:
+                if seq >= esperado + JANELA_DEFAULT:
+                    print(f"SEQ={seq} fora da janela [{esperado}, {esperado + JANELA_DEFAULT - 1}], descartado")
+                    continue
+                if seq >= esperado:
+                    recebidos[seq] = payload
+                    while esperado in recebidos:
+                        esperado += 1
+                confirmacao = montar_pacote(TIPO_ACK, {"SEQ": seq, "JANELA": JANELA_DEFAULT})
 
             sock_servidor.sendto(confirmacao.encode(), endereco)
             print(f"Enviado: {confirmacao}")
