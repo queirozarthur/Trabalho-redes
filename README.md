@@ -202,6 +202,29 @@ Depois de receber todos os fragmentos, o servidor monta o texto e confirma o enc
 
 A implementação também contém retransmissões por timeout ou NACK. Essas são extensões para recuperação; no caminho normal, sem erros e perdas, não são acionadas.
 
+
+### Especificação das mensagens
+
+Formato geral: `TIPO;CAMPO=valor;CAMPO=valor|payload`. O `|` separa o cabeçalho do payload, e o servidor corta só no primeiro `|`. Por isso o texto do usuário pode ter `;`, `=` e `|`.
+
+| Mensagem | Direção | Campos | Exemplo |
+|---|---|---|---|
+| `DADOS` | Cliente → Servidor | `SEQ`, `CHK` e payload de até 4 caracteres | `DADOS;SEQ=0;CHK=12135\|ola,` |
+| `ACK` | Servidor → Cliente | `SEQ`, `JANELA` | `ACK;SEQ=0;JANELA=5\|` |
+| `NACK` | Servidor → Cliente | `SEQ`, `JANELA` | `NACK;SEQ=3;JANELA=5\|` |
+| `FIM` | Cliente → Servidor | `TOTAL` de pacotes | `FIM;TOTAL=8\|` |
+| `FIM_ACK` | Servidor → Cliente | `TOTAL` | `FIM_ACK;TOTAL=8\|` |
+| `FIM_CONFIRM` | Cliente → Servidor | `TOTAL` | `FIM_CONFIRM;TOTAL=8\|` |
+
+- **GBN:** o servidor só aceita o próximo `SEQ` esperado e o `ACK` é cumulativo ("recebi tudo até SEQ").
+- **SR:** o servidor guarda os pacotes dentro da janela e o `ACK` é individual, um por `SEQ`.
+- **NACK:** é enviado quando o checksum não bate. No GBN o cliente reenvia a janela inteira, no SR só o pacote.
+- **Janela:** o servidor informa no `ACK` (de 1 a 5). No modo `INDIVIDUAL` o cliente usa janela 1.
+
+### Checksum
+
+O checksum foi implementado à mão, sem biblioteca, em `checksum.py`. Ele soma o payload em palavras de 16 bits com complemento de 1, igual ao UDP, e inverte os bits no final. O servidor recalcula o valor e compara com o `CHK` recebido: se for igual responde `ACK`, se for diferente responde `NACK`.
+
 <details>
 <summary>Relatório - Entrega 2</summary>
 
