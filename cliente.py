@@ -1,26 +1,54 @@
 import socket
+import time
 
 from checksum import calcular_checksum
-from config import BUFFER_SIZE, ENDERECO_SERVIDOR, TAM_TEXTO_MIN, PAYLOAD_MAX, TIMEOUT, TIPO_DADOS, TIPO_ACK, TIPO_FIM
-from protocolo_mensagem import desmontar, montar, fragmentar, montar_pacote, desmontar_pacote
+from config import (
+    BUFFER_SIZE,
+    ENDERECO_SERVIDOR,
+    JANELA_DEFAULT,
+    PAYLOAD_MAX,
+    TAM_TEXTO_MIN,
+    TIMEOUT,
+    TIPO_ACK,
+    TIPO_DADOS,
+    TIPO_FIM,
+    TIPO_NACK,
+)
+from protocolo_mensagem import desmontar, desmontar_pacote, fragmentar, montar, montar_pacote
 
 
-def enviar_dados(sock, seq, payload):
-    chk = calcular_checksum(payload)
-    pacote = montar_pacote(TIPO_DADOS, {"SEQ": seq, "CHK": chk}, payload)
+def enviar_dados(sock, seq, payload, retransmissao=False):
+    checksum = calcular_checksum(payload)
+    pacote = montar_pacote(TIPO_DADOS, {"SEQ": seq, "CHK": checksum}, payload)
     sock.sendto(pacote.encode(), ENDERECO_SERVIDOR)
-    print(f"[DADOS] SEQ={seq} CHK={chk} PAYLOAD={payload!r}")
+
+    rotulo = "[RETRANSMISSAO]" if retransmissao else "[DADOS]"
+    print(f"{rotulo} SEQ={seq} CHK={checksum} PAYLOAD={payload!r}")
 
 
-def receber_ack(sock):
-    dados, _ = sock.recvfrom(BUFFER_SIZE)
-    tipo, campos, _ = desmontar_pacote(dados.decode())
+def receber_controle(sock):
+    dados, endereco = sock.recvfrom(BUFFER_SIZE)
+    if endereco != ENDERECO_SERVIDOR:
+        return None, {}
+
+    try:
+        tipo, campos, _ = desmontar_pacote(dados.decode())
+    except (UnicodeDecodeError, ValueError, IndexError):
+        return None, {}
+
     print(f"[{tipo}] {campos}")
     return tipo, campos
 
 
+def retransmitir(sock, sequencias, fragmentos, tempos_envio):
+    agora = time.monotonic()
+    for seq in sequencias:
+        enviar_dados(sock, seq, fragmentos[seq], retransmissao=True)
+        tempos_envio[seq] = agora
+
+
 modo = input("Modo (INDIVIDUAL/LOTE): ").strip().upper()
-controle = input("Controle (GBN/SR): ").strip().upper()  
+controle = input("Controle (GBN/SR): ").strip().upper()
 tam_texto = int(input("Tamanho do texto: "))
 
 if tam_texto < TAM_TEXTO_MIN:
@@ -31,7 +59,7 @@ sock_cliente = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 mensagem = montar("TUDO_BEM", {
     "MODO": modo,
     "CTRL": controle,
-    "TAM_TEXTO": tam_texto
+    "TAM_TEXTO": tam_texto,
 })
 
 sock_cliente.sendto(mensagem.encode(), ENDERECO_SERVIDOR)
@@ -62,50 +90,90 @@ if tipo == "TUDO_BEM_SIM":
     fragmentos = fragmentar(texto, PAYLOAD_MAX)
     print(f"Texto dividido em {len(fragmentos)} fragmentos")
 
-    sock_cliente.settimeout(TIMEOUT)
-
-    ack_cumulativo = (controle == "GBN")
-
+    ack_cumulativo = controle == "GBN"
     if ack_cumulativo:
-        print("Controle ativo: GBN (servidor confirma em grupo, ACK cumulativo)")
+        print("Controle ativo: GBN (ACK cumulativo)")
     else:
-        print("Controle ativo: SR (servidor confirma cada pacote individualmente)")
+        print("Controle ativo: SR (ACK individual por pacote)")
 
     base = 0
     proximo = 0
-    confirmados = set() 
+    confirmados = set()
+    pendentes = {}
+    tempos_envio = {}
+    temporizador_gbn = None
 
     while base < len(fragmentos):
-        tam_janela = 1 if modo == "INDIVIDUAL" else janela
+        tamanho_janela = 1 if modo == "INDIVIDUAL" else janela
 
-        while proximo < len(fragmentos) and proximo < base + tam_janela:
+        while proximo < len(fragmentos) and proximo < base + tamanho_janela:
             enviar_dados(sock_cliente, proximo, fragmentos[proximo])
+            pendentes[proximo] = fragmentos[proximo]
+            tempos_envio[proximo] = time.monotonic()
+            if ack_cumulativo and temporizador_gbn is None:
+                temporizador_gbn = tempos_envio[proximo]
             proximo += 1
 
+        agora = time.monotonic()
+        if ack_cumulativo:
+            prazo = temporizador_gbn + TIMEOUT
+        else:
+            prazo = min(tempos_envio[seq] + TIMEOUT for seq in pendentes)
+        sock_cliente.settimeout(max(0.001, prazo - agora))
+
         try:
-            tipo, campos = receber_ack(sock_cliente)
-            seq_confirmado = int(campos["SEQ"])
-            janela = max(1, min(5, int(campos["JANELA"]))) 
+            tipo, campos = receber_controle(sock_cliente)
         except socket.timeout:
-            print(f"[TIMEOUT] nenhuma confirmacao em {TIMEOUT}s (retransmissao fica para o CP3)")
-            continue
-        except (KeyError, ValueError) as erro:
-            print(f"Confirmacao veio estranha, ignorando: {erro}")
+            agora = time.monotonic()
+            if ack_cumulativo:
+                if temporizador_gbn is not None and agora >= temporizador_gbn + TIMEOUT:
+                    retransmitir(sock_cliente, range(base, proximo), pendentes, tempos_envio)
+                    temporizador_gbn = agora
+            else:
+                expirados = [
+                    seq for seq in pendentes
+                    if agora >= tempos_envio[seq] + TIMEOUT
+                ]
+                retransmitir(sock_cliente, expirados, pendentes, tempos_envio)
             continue
 
-        if tipo != TIPO_ACK:
-            print(f"SEQ={seq_confirmado} nao confirmado (retransmissao fica para o CP3)")
+        if tipo not in (TIPO_ACK, TIPO_NACK):
+            continue
+
+        try:
+            seq_confirmado = int(campos["SEQ"])
+            janela_recebida = int(campos.get("JANELA", janela))
+        except (KeyError, ValueError):
+            print(f"Confirmacao veio estranha, ignorando: {campos}")
+            continue
+
+        janela = max(1, min(JANELA_DEFAULT, janela_recebida))
+
+        if tipo == TIPO_NACK:
+            if ack_cumulativo:
+                retransmitir(sock_cliente, range(base, proximo), pendentes, tempos_envio)
+                temporizador_gbn = time.monotonic()
+            elif seq_confirmado in pendentes:
+                retransmitir(sock_cliente, [seq_confirmado], pendentes, tempos_envio)
             continue
 
         if ack_cumulativo:
-            if seq_confirmado >= base:
+            if base <= seq_confirmado < proximo:
                 base = seq_confirmado + 1
-        else:
+                for seq in list(pendentes):
+                    if seq < base:
+                        pendentes.pop(seq)
+                        tempos_envio.pop(seq)
+                temporizador_gbn = time.monotonic() if base < proximo else None
+        elif seq_confirmado in pendentes:
+            pendentes.pop(seq_confirmado)
+            tempos_envio.pop(seq_confirmado)
             confirmados.add(seq_confirmado)
             while base in confirmados:
+                confirmados.remove(base)
                 base += 1
 
-        print(f"Janela: base={base} proximo={proximo} tamanho={tam_janela}")
+        print(f"Janela: base={base} proximo={proximo} tamanho={tamanho_janela}")
 
     fim = montar_pacote(TIPO_FIM, {"TOTAL": len(fragmentos)})
     sock_cliente.sendto(fim.encode(), ENDERECO_SERVIDOR)
