@@ -2,6 +2,7 @@
 
 Aplicação cliente-servidor desenvolvida em Python utilizando **sockets UDP**.
 
+
 ## Grupo:
 * Arthur da Fonte
 * Arthur Reis
@@ -181,5 +182,100 @@ Também podem ser testados valores inválidos de modo, controle e tamanhos menor
 [![Read the Docs](https://img.shields.io/badge/Read%20the%20Docs-%23000000.svg?style=for-the-badge&logo=readthedocs&logoColor=white)](https://docs.google.com/document/d/12iL8a6ONzk0YM9PACcytHFAVXDBGYF2RQswipV-NIGY/edit?usp=sharing)
 
 
+
+</details>
+
+</details>
+
+<details>
+<summary>Entrega 2</summary>
+
+## Entrega 2 — Protocolo sem erros e perdas
+
+### Funcionalidades
+
+Durante o handshake, o cliente informa o modo de envio (`INDIVIDUAL` ou `LOTE`), o controle de transmissão (`GBN` ou `SR`) e o tamanho do texto. O servidor valida os parâmetros e, se aceitar a comunicação, informa o tamanho da janela.
+
+O cliente divide o texto em fragmentos de até quatro caracteres. Cada pacote de dados contém um número de sequência e um checksum. No modo `INDIVIDUAL`, o cliente envia um pacote por vez; no modo `LOTE`, pode enviar pacotes até preencher a janela. O servidor confirma os pacotes cumulativamente no GBN e individualmente no SR.
+
+Depois de receber todos os fragmentos, o servidor monta o texto e confirma o encerramento com a sequência `FIM` → `FIM_ACK` → `FIM_CONFIRM`.
+
+A implementação também contém retransmissões por timeout ou NACK. Essas são extensões para recuperação; no caminho normal, sem erros e perdas, não são acionadas.
+
+<details>
+<summary>Relatório - Entrega 2</summary>
+
+# Relatório de Implementação — Protocolo de Transferência UDP
+
+## 1. Objetivo
+
+Implementar a troca de mensagens entre cliente e servidor utilizando UDP, com um protocolo definido para negociar os parâmetros, transferir um texto fragmentado e confirmar o encerramento. Nesta entrega, o fluxo principal considera um canal sem erros e sem perdas.
+
+## 2. O que foi feito
+
+- Implementação da transferência de dados após o handshake.
+- Fragmentação do texto em pacotes de até quatro caracteres.
+- Inclusão do número de sequência e do checksum nos pacotes de dados.
+- Confirmações cumulativas para GBN e individuais para SR.
+- Validação dos pacotes recebidos e montagem do texto no servidor.
+- Encerramento confirmado por `FIM`, `FIM_ACK` e `FIM_CONFIRM`.
+- Inclusão de retransmissões por timeout e NACK como mecanismos adicionais de recuperação.
+
+## 3. Como cheguei lá / decisões tomadas
+
+O protocolo mantém separados o modo de envio e o controle de transmissão. `INDIVIDUAL` limita o envio a um pacote por vez; `LOTE` utiliza a janela definida pelo servidor. O GBN confirma cumulativamente os pacotes recebidos em ordem, enquanto o SR confirma cada pacote individualmente.
+
+Cada pacote de dados inclui um número de sequência e um checksum. O servidor verifica o checksum antes de aceitar o conteúdo. Quando todos os fragmentos esperados chegam, o servidor os organiza e reconstrói o texto.
+
+Foi adicionado um encerramento em três mensagens para que cliente e servidor confirmem o fim da transferência. Os timeouts e as retransmissões estão implementados como complemento; o fluxo de referência desta entrega é o caminho sem erros ou perdas.
+
+## 4. Arquivos alterados
+
+- [`cliente.py`](./cliente.py) — fragmenta e envia o texto, processa ACK/NACK, controla a janela, retransmite pacotes quando necessário e confirma o encerramento.
+- [`servidor.py`](./servidor.py) — valida pacotes e checksums, envia confirmações, reconstrói o texto e conclui o handshake de encerramento.
+- [`config.py`](./config.py) — define o timeout e os tipos de mensagem usados no encerramento (`FIM_ACK` e `FIM_CONFIRM`).
+
+O protocolo também utiliza os módulos de apoio [`protocolo_mensagem.py`](./protocolo_mensagem.py), para montar, interpretar e fragmentar mensagens, e [`checksum.py`](./checksum.py), para calcular e validar checksums.
+
+## 5. Principais funções
+
+Em [`cliente.py`](./cliente.py):
+
+- `enviar_dados()` monta e envia um pacote com sequência e checksum.
+- `receber_controle()` recebe e interpreta mensagens de controle do servidor.
+- `retransmitir()` reenvia um ou mais pacotes pendentes.
+
+Em [`servidor.py`](./servidor.py):
+
+- `aguardar_confirmacao_final()` aguarda o `FIM_CONFIRM` e reenvia o `FIM_ACK` caso receba novamente o `FIM`.
+
+Em [`protocolo_mensagem.py`](./protocolo_mensagem.py):
+
+- `montar()` e `desmontar()` montam e interpretam mensagens de controle.
+- `montar_pacote()` e `desmontar_pacote()` montam e interpretam pacotes com cabeçalho e payload.
+- `fragmentar()` divide o texto em partes menores.
+
+Em [`checksum.py`](./checksum.py):
+
+- `calcular_checksum()` calcula o checksum do conteúdo.
+- `checksum_valido()` verifica se o checksum recebido corresponde ao conteúdo.
+
+## 6. Como testar/validar
+
+Primeiro, executar o servidor:
+
+```bash
+python servidor.py
+```
+
+Em outro terminal, executar:
+
+```bash
+python cliente.py
+```
+
+Testar as combinações `INDIVIDUAL` com `GBN`, `INDIVIDUAL` com `SR`, `LOTE` com `GBN` e `LOTE` com `SR`. Nos testes manuais realizados, as quatro combinações concluíram o fluxo sem perdas: o servidor recebeu e montou o texto, e a troca `FIM` → `FIM_ACK` → `FIM_CONFIRM` foi concluída.
+
+</details>
 
 </details>
