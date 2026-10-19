@@ -12,6 +12,8 @@ from config import (
     TIPO_ACK,
     TIPO_DADOS,
     TIPO_FIM,
+    TIPO_FIM_ACK,
+    TIPO_FIM_CONFIRM,
     TIPO_NACK,
 )
 from protocolo_mensagem import desmontar, desmontar_pacote, fragmentar, montar, montar_pacote
@@ -175,9 +177,39 @@ if tipo == "TUDO_BEM_SIM":
 
         print(f"Janela: base={base} proximo={proximo} tamanho={tamanho_janela}")
 
-    fim = montar_pacote(TIPO_FIM, {"TOTAL": len(fragmentos)})
-    sock_cliente.sendto(fim.encode(), ENDERECO_SERVIDOR)
-    print(f"[FIM] TOTAL={len(fragmentos)}")
+    total = len(fragmentos)
+    fim = montar_pacote(TIPO_FIM, {"TOTAL": total})
+    confirmacao_fim = montar_pacote(TIPO_FIM_CONFIRM, {"TOTAL": total})
+    fim_confirmado = False
+
+    while not fim_confirmado:
+        sock_cliente.sendto(fim.encode(), ENDERECO_SERVIDOR)
+        print(f"[FIM] TOTAL={total}")
+        prazo = time.monotonic() + TIMEOUT
+
+        while time.monotonic() < prazo:
+            sock_cliente.settimeout(max(0.001, prazo - time.monotonic()))
+            try:
+                tipo, campos = receber_controle(sock_cliente)
+            except socket.timeout:
+                break
+
+            if tipo != TIPO_FIM_ACK:
+                continue
+
+            try:
+                total_confirmado = int(campos["TOTAL"])
+            except (KeyError, ValueError):
+                continue
+
+            if total_confirmado == total:
+                sock_cliente.sendto(confirmacao_fim.encode(), ENDERECO_SERVIDOR)
+                print(f"[FIM_CONFIRM] TOTAL={total}")
+                fim_confirmado = True
+                break
+
+        if not fim_confirmado:
+            print(f"[TIMEOUT] sem FIM_ACK em {TIMEOUT}s; retransmitindo FIM")
 else:
     print(f"Conexao recusada. Motivo: {campos['MOTIVO']}")
 
