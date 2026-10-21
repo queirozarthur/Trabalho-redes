@@ -300,7 +300,7 @@ python cliente.py
 Testar as combinações `INDIVIDUAL` com `GBN`, `INDIVIDUAL` com `SR`, `LOTE` com `GBN` e `LOTE` com `SR`. Nos testes manuais realizados, as quatro combinações concluíram o fluxo sem perdas: o servidor recebeu e montou o texto, e a troca `FIM` → `FIM_ACK` → `FIM_CONFIRM` foi concluída.
 
 ### Relatório / Diário de Aprendizagem - Entrega 2 ⬇️:
-[![Read the Docs]([https://img.shields.io/badge/Read%20the%20Docs-%23000000.svg?style=for-the-badge&logo=readthedocs&logoColor=white)](https://docs.google.com/document/d/1RJ7ZuJGJtmab1CgMhnQLUB5gL-h0BEnbhnKPvbHM0Wo/edit?usp=sharing](https://docs.google.com/document/d/1RJ7ZuJGJtmab1CgMhnQLUB5gL-h0BEnbhnKPvbHM0Wo/edit?usp=sharing))
+[![Read the Docs](https://img.shields.io/badge/Read%20the%20Docs-%23000000.svg?style=for-the-badge&logo=readthedocs&logoColor=white)](https://docs.google.com/document/d/1RJ7ZuJGJtmab1CgMhnQLUB5gL-h0BEnbhnKPvbHM0Wo/edit?usp=sharing)
 </details>
 
 </details>
