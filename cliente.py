@@ -2,7 +2,7 @@ import secrets
 import socket
 import time
 
-from criptografia import AES128
+from criptografia import aplicar_fragmento, expandir_chave
 from config import (
     CRIPTOGRAFIA,
     BUFFER_SIZE,
@@ -57,7 +57,8 @@ def retransmitir(sock, sequencias, pacotes, tempos_envio):
 
 
 try:
-    cifra = AES128(carregar_chave())
+    chave = carregar_chave()
+    chaves = expandir_chave(chave)
 except ValueError as erro:
     raise SystemExit(str(erro)) from None
 
@@ -115,8 +116,10 @@ if tipo == "TUDO_BEM_SIM":
     fragmentos = fragmentar(texto, PAYLOAD_MAX)
     pacotes = []
     for seq, fragmento in enumerate(fragmentos):
-        cifrado = cifra.aplicar_fragmento(fragmento.encode("utf-8"), nonce, seq)
-        pacotes.append(montar_pacote_integro(TIPO_DADOS, {"SEQ": seq}, cifrado.hex()))
+        dados_fragmento = fragmento.encode("utf-8")
+        cifrado = aplicar_fragmento(dados_fragmento, nonce, seq, chaves)
+        pacote = montar_pacote_integro(TIPO_DADOS, {"SEQ": seq}, cifrado.hex())
+        pacotes.append(pacote)
     print(f"Texto dividido em {len(fragmentos)} fragmentos")
 
     ack_cumulativo = controle == "GBN"

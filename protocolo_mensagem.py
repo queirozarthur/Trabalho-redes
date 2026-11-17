@@ -35,12 +35,16 @@ def fragmentar(texto, tamanho):
 
 
 def conteudo_checksum(tipo, campos, payload):
-    ordenados = {chave: campos[chave] for chave in sorted(campos) if chave != "CHK"}
+    ordenados = {}
+    for chave in sorted(campos):
+        if chave != "CHK":
+            ordenados[chave] = campos[chave]
     return montar_pacote(tipo, ordenados, payload).encode("utf-8")
 
 
 def montar_pacote_integro(tipo, campos, payload=""):
-    campos = {chave: valor for chave, valor in campos.items() if chave != "CHK"}
+    campos = campos.copy()
+    campos.pop("CHK", None)
     campos["CHK"] = calcular_checksum(conteudo_checksum(tipo, campos, payload))
     return montar_pacote(tipo, campos, payload)
 

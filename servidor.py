@@ -1,7 +1,7 @@
 import socket
 import time
 
-from criptografia import AES128
+from criptografia import aplicar_fragmento, expandir_chave
 from config import (
     CRIPTOGRAFIA,
     BUFFER_SIZE,
@@ -67,7 +67,8 @@ def aguardar_confirmacao_final(sock, endereco_cliente, total):
 
 
 try:
-    cifra = AES128(carregar_chave())
+    chave = carregar_chave()
+    chaves = expandir_chave(chave)
 except ValueError as erro:
     raise SystemExit(str(erro)) from None
 
@@ -97,7 +98,7 @@ else:
         resposta = montar("RECUSADO", {"MOTIVO": "CTRL_INVALIDO"})
     elif tam_texto < TAM_TEXTO_MIN:
         resposta = montar("RECUSADO", {"MOTIVO": "TAM_TEXTO_MENOR_QUE_MINIMO"})
-    elif tam_texto > PAYLOAD_MAX * (1 << 32):
+    elif tam_texto > PAYLOAD_MAX * 4294967296:
         resposta = montar("RECUSADO", {"MOTIVO": "TAM_TEXTO_MAIOR_QUE_LIMITE"})
     elif campos.get("CRIPTO") != CRIPTOGRAFIA:
         resposta = montar("RECUSADO", {"MOTIVO": "CRIPTO_INVALIDA"})
@@ -179,7 +180,8 @@ if aceito:
             if not payload or len(payload) > 32 or any(c not in "0123456789abcdef" for c in payload):
                 raise ValueError("Payload hexadecimal invalido")
             cifrado = bytes.fromhex(payload)
-            fragmento = cifra.aplicar_fragmento(cifrado, nonce, seq).decode("utf-8")
+            decifrado = aplicar_fragmento(cifrado, nonce, seq, chaves)
+            fragmento = decifrado.decode("utf-8")
             if not fragmento or len(fragmento) > PAYLOAD_MAX:
                 raise ValueError("Fragmento fora do limite de caracteres")
         except ValueError as erro:
