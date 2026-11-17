@@ -194,7 +194,10 @@ if tipo == "TUDO_BEM_SIM":
             print(f"Confirmacao veio estranha, ignorando: {campos}")
             continue
 
-        janela = max(1, min(JANELA_DEFAULT, janela_recebida))
+        janela_nova = max(1, min(JANELA_DEFAULT, janela_recebida))
+        if janela_nova != janela:
+            print(f"[JANELA] servidor ajustou a janela: {janela} -> {janela_nova}")
+        janela = janela_nova
 
         if tipo == TIPO_NACK:
             if ack_cumulativo:

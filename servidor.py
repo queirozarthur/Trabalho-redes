@@ -29,6 +29,35 @@ from protocolo_mensagem import (
 
 MODOS_VALIDOS = ["INDIVIDUAL", "LOTE"]
 CONTROLES_VALIDOS = ["GBN", "SR"]
+JANELA_MIN = 1
+
+janela = JANELA_DEFAULT
+ultimo_buraco = None
+
+
+def reduzir_janela(motivo):
+    """Erro detectado: corta a janela pela metade (minimo 1)."""
+    global janela
+    nova = max(JANELA_MIN, janela // 2)
+    if nova != janela:
+        print(f"[JANELA] {janela} -> {nova} ({motivo})")
+    janela = nova
+
+
+def aumentar_janela():
+    """Pacote novo entregue em ordem: cresce 1 (maximo JANELA_DEFAULT)."""
+    global janela
+    if janela < JANELA_DEFAULT:
+        print(f"[JANELA] {janela} -> {janela + 1} (entrega em ordem)")
+        janela += 1
+
+
+def sinalizar_buraco(esperado):
+    """Reduz a janela uma unica vez por buraco na sequencia."""
+    global ultimo_buraco
+    if ultimo_buraco != esperado:
+        ultimo_buraco = esperado
+        reduzir_janela(f"SEQ={esperado} faltando")
 
 
 def seq_de_pacote_corrompido(texto, total_maximo):
@@ -161,7 +190,8 @@ if aceito:
                 print(f"Pacote veio estranho, ignorando: {erro}")
                 continue
             print(f"[ERRO] SEQ={seq_corrompido} {erro} PACOTE={texto_pacote}")
-            confirmacao = montar_pacote_integro(TIPO_NACK, {"SEQ": seq_corrompido, "JANELA": JANELA_DEFAULT})
+            reduzir_janela("checksum invalido")
+            confirmacao = montar_pacote_integro(TIPO_NACK, {"SEQ": seq_corrompido, "JANELA": janela})
             sock_servidor.sendto(confirmacao.encode(), endereco_cliente)
             print(f"Enviado: {confirmacao}")
             continue
@@ -216,7 +246,8 @@ if aceito:
                 raise ValueError("Fragmento fora do limite de caracteres")
         except ValueError as erro:
             print(f"Fragmento invalido SEQ={seq}: {erro}")
-            confirmacao = montar_pacote_integro(TIPO_NACK, {"SEQ": seq, "JANELA": JANELA_DEFAULT})
+            reduzir_janela("fragmento invalido")
+            confirmacao = montar_pacote_integro(TIPO_NACK, {"SEQ": seq, "JANELA": janela})
             sock_servidor.sendto(confirmacao.encode(), endereco_cliente)
             continue
 
@@ -226,12 +257,15 @@ if aceito:
             if seq == esperado:
                 recebidos[seq] = fragmento
                 esperado += 1
+                aumentar_janela()
             elif seq < esperado:
                 print(f"[DUPLICADO] SEQ={seq} ja entregue, reenviando ACK cumulativo")
             else:
                 print(f"Fora de ordem (esperado SEQ={esperado}), descartado")
-            confirmacao = montar_pacote_integro(TIPO_ACK, {"SEQ": esperado - 1, "JANELA": JANELA_DEFAULT})
+                sinalizar_buraco(esperado)
+            confirmacao = montar_pacote_integro(TIPO_ACK, {"SEQ": esperado - 1, "JANELA": janela})
         else:
+            # buffer de recepcao tem capacidade fixa; a janela anunciada pode ser menor
             if seq >= esperado + JANELA_DEFAULT:
                 print(f"SEQ={seq} fora da janela [{esperado}, {esperado + JANELA_DEFAULT - 1}], descartado")
                 continue
@@ -241,9 +275,12 @@ if aceito:
                 recebidos[seq] = fragmento
                 if seq > esperado:
                     print(f"SEQ={seq} guardado no buffer (aguardando SEQ={esperado})")
+                    sinalizar_buraco(esperado)
+                else:
+                    aumentar_janela()
                 while esperado in recebidos:
                     esperado += 1
-            confirmacao = montar_pacote_integro(TIPO_ACK, {"SEQ": seq, "JANELA": JANELA_DEFAULT})
+            confirmacao = montar_pacote_integro(TIPO_ACK, {"SEQ": seq, "JANELA": janela})
 
         sock_servidor.sendto(confirmacao.encode(), endereco_cliente)
         print(f"Enviado: {confirmacao}")
