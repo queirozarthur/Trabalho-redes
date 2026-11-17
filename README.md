@@ -7,7 +7,6 @@ Aplicação cliente-servidor desenvolvida em Python utilizando **sockets UDP**.
 * Arthur da Fonte
 * Arthur Reis
 * Bruno Santana
-* Hugo Diego
 * Lucas Samuel
 * Matheus Freire
 * Matheus Fialho
