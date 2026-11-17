@@ -1,8 +1,9 @@
 import socket
 import time
 
-from checksum import checksum_valido
+from criptografia import AES128
 from config import (
+    CRIPTOGRAFIA,
     BUFFER_SIZE,
     ENDERECO_SERVIDOR,
     JANELA_DEFAULT,
@@ -15,8 +16,14 @@ from config import (
     TIPO_FIM_ACK,
     TIPO_FIM_CONFIRM,
     TIPO_NACK,
+    carregar_chave,
 )
-from protocolo_mensagem import desmontar, desmontar_pacote, montar, montar_pacote
+from protocolo_mensagem import (
+    desmontar,
+    desmontar_pacote_integro,
+    montar,
+    montar_pacote_integro,
+)
 
 
 MODOS_VALIDOS = ["INDIVIDUAL", "LOTE"]
@@ -24,7 +31,7 @@ CONTROLES_VALIDOS = ["GBN", "SR"]
 
 
 def aguardar_confirmacao_final(sock, endereco_cliente, total):
-    confirmacao = montar_pacote(TIPO_FIM_ACK, {"TOTAL": total})
+    confirmacao = montar_pacote_integro(TIPO_FIM_ACK, {"TOTAL": total})
     prazo = time.monotonic() + 2 * TIMEOUT
 
     while True:
@@ -44,7 +51,7 @@ def aguardar_confirmacao_final(sock, endereco_cliente, total):
             continue
 
         try:
-            tipo, campos, _ = desmontar_pacote(dados.decode())
+            tipo, campos, _ = desmontar_pacote_integro(dados.decode())
             total_recebido = int(campos["TOTAL"])
         except (UnicodeDecodeError, ValueError, KeyError, IndexError):
             continue
@@ -58,6 +65,11 @@ def aguardar_confirmacao_final(sock, endereco_cliente, total):
             print(f"[FIM_ACK] reenviado TOTAL={total}")
             prazo = time.monotonic() + 2 * TIMEOUT
 
+
+try:
+    cifra = AES128(carregar_chave())
+except ValueError as erro:
+    raise SystemExit(str(erro)) from None
 
 sock_servidor = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 sock_servidor.bind(ENDERECO_SERVIDOR)
@@ -76,6 +88,8 @@ else:
     modo = campos["MODO"]
     controle = campos["CTRL"]
     tam_texto = int(campos["TAM_TEXTO"])
+    nonce_hex = campos.get("NONCE", "")
+    nonce_valido = len(nonce_hex) == 24 and all(c in "0123456789abcdef" for c in nonce_hex)
 
     if modo not in MODOS_VALIDOS:
         resposta = montar("RECUSADO", {"MOTIVO": "MODO_INVALIDO"})
@@ -83,12 +97,21 @@ else:
         resposta = montar("RECUSADO", {"MOTIVO": "CTRL_INVALIDO"})
     elif tam_texto < TAM_TEXTO_MIN:
         resposta = montar("RECUSADO", {"MOTIVO": "TAM_TEXTO_MENOR_QUE_MINIMO"})
+    elif tam_texto > PAYLOAD_MAX * (1 << 32):
+        resposta = montar("RECUSADO", {"MOTIVO": "TAM_TEXTO_MAIOR_QUE_LIMITE"})
+    elif campos.get("CRIPTO") != CRIPTOGRAFIA:
+        resposta = montar("RECUSADO", {"MOTIVO": "CRIPTO_INVALIDA"})
+    elif not nonce_valido:
+        resposta = montar("RECUSADO", {"MOTIVO": "NONCE_INVALIDO"})
     else:
+        nonce = bytes.fromhex(nonce_hex)
         resposta = montar("TUDO_BEM_SIM", {
             "MODO": modo,
             "CTRL": controle,
             "TAM_TEXTO": tam_texto,
             "JANELA": JANELA_DEFAULT,
+            "CRIPTO": CRIPTOGRAFIA,
+            "NONCE": nonce_hex,
         })
         aceito = True
 
@@ -107,7 +130,7 @@ if aceito:
             continue
 
         try:
-            tipo, campos, payload = desmontar_pacote(dados.decode())
+            tipo, campos, payload = desmontar_pacote_integro(dados.decode())
         except (UnicodeDecodeError, ValueError, IndexError) as erro:
             print(f"Pacote veio estranho, ignorando: {erro}")
             continue
@@ -131,7 +154,7 @@ if aceito:
             texto = "".join(recebidos[seq] for seq in range(total))
             print(f"Texto completo: {texto}")
 
-            confirmacao = montar_pacote(TIPO_FIM_ACK, {"TOTAL": total})
+            confirmacao = montar_pacote_integro(TIPO_FIM_ACK, {"TOTAL": total})
             sock_servidor.sendto(confirmacao.encode(), endereco_cliente)
             print(f"[FIM_ACK] TOTAL={total}")
             aguardar_confirmacao_final(sock_servidor, endereco_cliente, total)
@@ -148,32 +171,41 @@ if aceito:
             print("Pacote DADOS sem SEQ/CHK valido, ignorando")
             continue
 
-        if seq < 0 or seq >= total_maximo or len(payload) > PAYLOAD_MAX:
+        if seq < 0 or seq >= total_maximo:
             print(f"Pacote invalido descartado: SEQ={seq}")
             continue
 
-        integro = checksum_valido(payload, checksum)
-        status = "OK" if integro else "CORROMPIDO"
-        print(f"[DADOS] SEQ={seq} CHECKSUM={checksum} PAYLOAD={payload!r} {status}")
+        try:
+            if not payload or len(payload) > 32 or any(c not in "0123456789abcdef" for c in payload):
+                raise ValueError("Payload hexadecimal invalido")
+            cifrado = bytes.fromhex(payload)
+            fragmento = cifra.aplicar_fragmento(cifrado, nonce, seq).decode("utf-8")
+            if not fragmento or len(fragmento) > PAYLOAD_MAX:
+                raise ValueError("Fragmento fora do limite de caracteres")
+        except ValueError as erro:
+            print(f"Fragmento invalido SEQ={seq}: {erro}")
+            confirmacao = montar_pacote_integro(TIPO_NACK, {"SEQ": seq, "JANELA": JANELA_DEFAULT})
+            sock_servidor.sendto(confirmacao.encode(), endereco_cliente)
+            continue
 
-        if not integro:
-            confirmacao = montar_pacote(TIPO_NACK, {"SEQ": seq, "JANELA": JANELA_DEFAULT})
-        elif controle == "GBN":
+        print(f"[DADOS] SEQ={seq} CHECKSUM={checksum} CIFRADO={payload} OK")
+
+        if controle == "GBN":
             if seq == esperado:
-                recebidos[seq] = payload
+                recebidos[seq] = fragmento
                 esperado += 1
             else:
                 print(f"Fora de ordem (esperado SEQ={esperado}), descartado")
-            confirmacao = montar_pacote(TIPO_ACK, {"SEQ": esperado - 1, "JANELA": JANELA_DEFAULT})
+            confirmacao = montar_pacote_integro(TIPO_ACK, {"SEQ": esperado - 1, "JANELA": JANELA_DEFAULT})
         else:
             if seq >= esperado + JANELA_DEFAULT:
                 print(f"SEQ={seq} fora da janela [{esperado}, {esperado + JANELA_DEFAULT - 1}], descartado")
                 continue
             if seq >= esperado:
-                recebidos[seq] = payload
+                recebidos[seq] = fragmento
                 while esperado in recebidos:
                     esperado += 1
-            confirmacao = montar_pacote(TIPO_ACK, {"SEQ": seq, "JANELA": JANELA_DEFAULT})
+            confirmacao = montar_pacote_integro(TIPO_ACK, {"SEQ": seq, "JANELA": JANELA_DEFAULT})
 
         sock_servidor.sendto(confirmacao.encode(), endereco_cliente)
         print(f"Enviado: {confirmacao}")

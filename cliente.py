@@ -1,8 +1,10 @@
+import secrets
 import socket
 import time
 
-from checksum import calcular_checksum
+from criptografia import AES128
 from config import (
+    CRIPTOGRAFIA,
     BUFFER_SIZE,
     ENDERECO_SERVIDOR,
     JANELA_DEFAULT,
@@ -15,17 +17,22 @@ from config import (
     TIPO_FIM_ACK,
     TIPO_FIM_CONFIRM,
     TIPO_NACK,
+    carregar_chave,
 )
-from protocolo_mensagem import desmontar, desmontar_pacote, fragmentar, montar, montar_pacote
+from protocolo_mensagem import (
+    desmontar,
+    desmontar_pacote_integro,
+    fragmentar,
+    montar,
+    montar_pacote_integro,
+)
 
 
-def enviar_dados(sock, seq, payload, retransmissao=False):
-    checksum = calcular_checksum(payload)
-    pacote = montar_pacote(TIPO_DADOS, {"SEQ": seq, "CHK": checksum}, payload)
+def enviar_dados(sock, seq, pacote, retransmissao=False):
     sock.sendto(pacote.encode(), ENDERECO_SERVIDOR)
 
     rotulo = "[RETRANSMISSAO]" if retransmissao else "[DADOS]"
-    print(f"{rotulo} SEQ={seq} CHK={checksum} PAYLOAD={payload!r}")
+    print(f"{rotulo} SEQ={seq} PACOTE={pacote}")
 
 
 def receber_controle(sock):
@@ -34,7 +41,7 @@ def receber_controle(sock):
         return None, {}
 
     try:
-        tipo, campos, _ = desmontar_pacote(dados.decode())
+        tipo, campos, _ = desmontar_pacote_integro(dados.decode())
     except (UnicodeDecodeError, ValueError, IndexError):
         return None, {}
 
@@ -42,13 +49,19 @@ def receber_controle(sock):
     return tipo, campos
 
 
-def retransmitir(sock, sequencias, fragmentos, tempos_envio):
+def retransmitir(sock, sequencias, pacotes, tempos_envio):
     agora = time.monotonic()
     for seq in sequencias:
-        enviar_dados(sock, seq, fragmentos[seq], retransmissao=True)
+        enviar_dados(sock, seq, pacotes[seq], retransmissao=True)
         tempos_envio[seq] = agora
 
 
+try:
+    cifra = AES128(carregar_chave())
+except ValueError as erro:
+    raise SystemExit(str(erro)) from None
+
+nonce = secrets.token_bytes(12)
 modo = input("Modo (INDIVIDUAL/LOTE): ").strip().upper()
 controle = input("Controle (GBN/SR): ").strip().upper()
 tam_texto = int(input("Tamanho do texto: "))
@@ -62,6 +75,8 @@ mensagem = montar("TUDO_BEM", {
     "MODO": modo,
     "CTRL": controle,
     "TAM_TEXTO": tam_texto,
+    "CRIPTO": CRIPTOGRAFIA,
+    "NONCE": nonce.hex(),
 })
 
 sock_cliente.sendto(mensagem.encode(), ENDERECO_SERVIDOR)
@@ -73,6 +88,14 @@ tipo, campos = desmontar(dados.decode())
 print(f"Recebido de {endereco_servidor}: {dados.decode()}")
 
 if tipo == "TUDO_BEM_SIM":
+    resposta_valida = (
+        endereco_servidor == ENDERECO_SERVIDOR
+        and campos.get("CRIPTO") == CRIPTOGRAFIA
+        and campos.get("NONCE") == nonce.hex()
+    )
+    if not resposta_valida:
+        sock_cliente.close()
+        raise SystemExit("Resposta com endereco, criptografia ou nonce inesperado")
     modo = campos["MODO"]
     controle = campos["CTRL"]
     tam_texto = int(campos["TAM_TEXTO"])
@@ -90,6 +113,10 @@ if tipo == "TUDO_BEM_SIM":
             break
 
     fragmentos = fragmentar(texto, PAYLOAD_MAX)
+    pacotes = []
+    for seq, fragmento in enumerate(fragmentos):
+        cifrado = cifra.aplicar_fragmento(fragmento.encode("utf-8"), nonce, seq)
+        pacotes.append(montar_pacote_integro(TIPO_DADOS, {"SEQ": seq}, cifrado.hex()))
     print(f"Texto dividido em {len(fragmentos)} fragmentos")
 
     ack_cumulativo = controle == "GBN"
@@ -109,8 +136,8 @@ if tipo == "TUDO_BEM_SIM":
         tamanho_janela = 1 if modo == "INDIVIDUAL" else janela
 
         while proximo < len(fragmentos) and proximo < base + tamanho_janela:
-            enviar_dados(sock_cliente, proximo, fragmentos[proximo])
-            pendentes[proximo] = fragmentos[proximo]
+            enviar_dados(sock_cliente, proximo, pacotes[proximo])
+            pendentes[proximo] = pacotes[proximo]
             tempos_envio[proximo] = time.monotonic()
             if ack_cumulativo and temporizador_gbn is None:
                 temporizador_gbn = tempos_envio[proximo]
@@ -178,8 +205,8 @@ if tipo == "TUDO_BEM_SIM":
         print(f"Janela: base={base} proximo={proximo} tamanho={tamanho_janela}")
 
     total = len(fragmentos)
-    fim = montar_pacote(TIPO_FIM, {"TOTAL": total})
-    confirmacao_fim = montar_pacote(TIPO_FIM_CONFIRM, {"TOTAL": total})
+    fim = montar_pacote_integro(TIPO_FIM, {"TOTAL": total})
+    confirmacao_fim = montar_pacote_integro(TIPO_FIM_CONFIRM, {"TOTAL": total})
     fim_confirmado = False
 
     while not fim_confirmado:
