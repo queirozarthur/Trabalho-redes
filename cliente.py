@@ -54,6 +54,10 @@ def receber_controle(sock):
     except (UnicodeDecodeError, ValueError, IndexError):
         return None, {}
 
+    if tipo in (TIPO_ACK, TIPO_NACK) and simulador.consumir(cenario["perder_ack"], campos.get("SEQ")):
+        print(f"[{tipo}] {campos} [SIMULADO: PERDIDO] confirmacao descartada")
+        return None, {}
+
     print(f"[{tipo}] {campos}")
     return tipo, campos
 

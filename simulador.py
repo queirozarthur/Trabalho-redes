@@ -28,6 +28,10 @@ def ler_falhas(texto):
 
 
 def consumir(falhas, seq):
+    try:
+        seq = int(seq)
+    except (TypeError, ValueError):
+        return False
     if falhas.get(seq, 0) > 0:
         falhas[seq] -= 1
         return True
@@ -53,6 +57,7 @@ def configurar():
             return {
                 "perder_dados": ler_falhas(input("Perder DADOS dos SEQs: ")),
                 "corromper_dados": ler_falhas(input("Corromper DADOS dos SEQs: ")),
+                "perder_ack": ler_falhas(input("Descartar ACK/NACK com SEQ: ")),
             }
         except ValueError as erro:
             print(f"Entrada invalida ({erro}), tente de novo")
