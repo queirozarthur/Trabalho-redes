@@ -200,7 +200,9 @@ if tipo == "TUDO_BEM_SIM":
         janela = janela_nova
 
         if tipo == TIPO_NACK:
-            if ack_cumulativo:
+            if not base <= seq_confirmado < proximo:
+                print(f"NACK SEQ={seq_confirmado} fora da janela [{base}, {proximo - 1}], ignorando")
+            elif ack_cumulativo:
                 retransmitir(sock_cliente, range(base, proximo), pendentes, tempos_envio)
                 temporizador_gbn = time.monotonic()
             elif seq_confirmado in pendentes:
