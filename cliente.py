@@ -2,6 +2,7 @@ import secrets
 import socket
 import time
 
+import simulador
 from criptografia import aplicar_fragmento, expandir_chave
 from config import (
     CRIPTOGRAFIA,
@@ -29,9 +30,17 @@ from protocolo_mensagem import (
 
 
 def enviar_dados(sock, seq, pacote, retransmissao=False):
-    sock.sendto(pacote.encode(), ENDERECO_SERVIDOR)
-
     rotulo = "[RETRANSMISSAO]" if retransmissao else "[DADOS]"
+
+    if simulador.consumir(cenario["perder_dados"], seq):
+        print(f"{rotulo} SEQ={seq} [SIMULADO: PERDIDO] pacote nao saiu do cliente")
+        return
+
+    if simulador.consumir(cenario["corromper_dados"], seq):
+        pacote = simulador.corromper(pacote)
+        rotulo += " [SIMULADO: CORROMPIDO]"
+
+    sock.sendto(pacote.encode(), ENDERECO_SERVIDOR)
     print(f"{rotulo} SEQ={seq} PACOTE={pacote}")
 
 
@@ -112,6 +121,8 @@ if tipo == "TUDO_BEM_SIM":
             print(f"O texto ultrapassa o limite de {tam_texto} caracteres.")
         else:
             break
+
+    cenario = simulador.configurar()
 
     fragmentos = fragmentar(texto, PAYLOAD_MAX)
     pacotes = []
