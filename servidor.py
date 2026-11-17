@@ -226,6 +226,8 @@ if aceito:
             if seq == esperado:
                 recebidos[seq] = fragmento
                 esperado += 1
+            elif seq < esperado:
+                print(f"[DUPLICADO] SEQ={seq} ja entregue, reenviando ACK cumulativo")
             else:
                 print(f"Fora de ordem (esperado SEQ={esperado}), descartado")
             confirmacao = montar_pacote_integro(TIPO_ACK, {"SEQ": esperado - 1, "JANELA": JANELA_DEFAULT})
@@ -233,8 +235,12 @@ if aceito:
             if seq >= esperado + JANELA_DEFAULT:
                 print(f"SEQ={seq} fora da janela [{esperado}, {esperado + JANELA_DEFAULT - 1}], descartado")
                 continue
-            if seq >= esperado:
+            if seq in recebidos:
+                print(f"[DUPLICADO] SEQ={seq} ja recebido, reenviando ACK")
+            else:
                 recebidos[seq] = fragmento
+                if seq > esperado:
+                    print(f"SEQ={seq} guardado no buffer (aguardando SEQ={esperado})")
                 while esperado in recebidos:
                     esperado += 1
             confirmacao = montar_pacote_integro(TIPO_ACK, {"SEQ": seq, "JANELA": JANELA_DEFAULT})
