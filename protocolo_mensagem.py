@@ -1,3 +1,6 @@
+from checksum import calcular_checksum, checksum_valido
+
+
 SEPARADOR = ";"
 IGUAL = "="
 SEPARADOR_PAYLOAD = "|"
@@ -14,6 +17,8 @@ def desmontar(mensagem):
     campos = {}
     for parte in partes[1:]:
         chave, valor = parte.split(IGUAL, 1)
+        if not chave or chave in campos:
+            raise ValueError("Campo vazio ou repetido no cabecalho")
         campos[chave] = valor
     return tipo, campos
 
@@ -27,3 +32,25 @@ def desmontar_pacote(pacote):
 
 def fragmentar(texto, tamanho):
     return [texto[i:i + tamanho] for i in range(0, len(texto), tamanho)]
+
+
+def conteudo_checksum(tipo, campos, payload):
+    ordenados = {chave: campos[chave] for chave in sorted(campos) if chave != "CHK"}
+    return montar_pacote(tipo, ordenados, payload).encode("utf-8")
+
+
+def montar_pacote_integro(tipo, campos, payload=""):
+    campos = {chave: valor for chave, valor in campos.items() if chave != "CHK"}
+    campos["CHK"] = calcular_checksum(conteudo_checksum(tipo, campos, payload))
+    return montar_pacote(tipo, campos, payload)
+
+
+def desmontar_pacote_integro(pacote):
+    tipo, campos, payload = desmontar_pacote(pacote)
+    try:
+        checksum = int(campos["CHK"])
+    except (KeyError, ValueError):
+        raise ValueError("Pacote sem checksum valido") from None
+    if not checksum_valido(conteudo_checksum(tipo, campos, payload), checksum):
+        raise ValueError("Checksum nao confere")
+    return tipo, campos, payload

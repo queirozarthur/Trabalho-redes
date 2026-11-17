@@ -1,3 +1,14 @@
+import os
+
+
+def carregar_chave():
+    valor = os.environ.get("REDES_CHAVE_HEX", "")
+    if len(valor) != 32 or any(c not in "0123456789abcdefABCDEF" for c in valor):
+        raise ValueError("Defina REDES_CHAVE_HEX com uma chave de 32 digitos hexadecimais")
+    return bytes.fromhex(valor)
+
+
+CRIPTOGRAFIA = "AES128-CTR"
 IP = "127.0.0.1"
 PORTA= 8082
 JANELA_DEFAULT= 5
