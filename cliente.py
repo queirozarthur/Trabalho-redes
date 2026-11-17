@@ -231,8 +231,11 @@ if tipo == "TUDO_BEM_SIM":
     fim_confirmado = False
 
     while not fim_confirmado:
-        sock_cliente.sendto(fim.encode(), ENDERECO_SERVIDOR)
-        print(f"[FIM] TOTAL={total}")
+        if simulador.consumir_vez(cenario, "perder_fim"):
+            print(f"[FIM] TOTAL={total} [SIMULADO: PERDIDO] pacote nao saiu do cliente")
+        else:
+            sock_cliente.sendto(fim.encode(), ENDERECO_SERVIDOR)
+            print(f"[FIM] TOTAL={total}")
         prazo = time.monotonic() + TIMEOUT
 
         while time.monotonic() < prazo:
@@ -243,6 +246,10 @@ if tipo == "TUDO_BEM_SIM":
                 break
 
             if tipo != TIPO_FIM_ACK:
+                continue
+
+            if simulador.consumir_vez(cenario, "perder_fim_ack"):
+                print("[SIMULADO: PERDIDO] FIM_ACK descartado")
                 continue
 
             try:

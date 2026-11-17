@@ -27,6 +27,21 @@ def ler_falhas(texto):
     return falhas
 
 
+def ler_vezes(texto):
+    texto = texto.strip()
+    vezes = int(texto) if texto else 0
+    if vezes < 0:
+        raise ValueError(f"Quantidade invalida: {texto}")
+    return vezes
+
+
+def consumir_vez(cenario, chave):
+    if cenario[chave] > 0:
+        cenario[chave] -= 1
+        return True
+    return False
+
+
 def consumir(falhas, seq):
     try:
         seq = int(seq)
@@ -58,6 +73,8 @@ def configurar():
                 "perder_dados": ler_falhas(input("Perder DADOS dos SEQs: ")),
                 "corromper_dados": ler_falhas(input("Corromper DADOS dos SEQs: ")),
                 "perder_ack": ler_falhas(input("Descartar ACK/NACK com SEQ: ")),
+                "perder_fim": ler_vezes(input("Perder FIM quantas vezes: ")),
+                "perder_fim_ack": ler_vezes(input("Descartar FIM_ACK quantas vezes: ")),
             }
         except ValueError as erro:
             print(f"Entrada invalida ({erro}), tente de novo")
