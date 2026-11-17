@@ -20,6 +20,7 @@ from config import (
 )
 from protocolo_mensagem import (
     desmontar,
+    desmontar_pacote,
     desmontar_pacote_integro,
     montar,
     montar_pacote_integro,
@@ -28,6 +29,22 @@ from protocolo_mensagem import (
 
 MODOS_VALIDOS = ["INDIVIDUAL", "LOTE"]
 CONTROLES_VALIDOS = ["GBN", "SR"]
+
+
+def seq_de_pacote_corrompido(texto, total_maximo):
+    """Tenta ler o SEQ de um DADOS cujo checksum falhou, para mandar NACK.
+
+    Se o cabecalho tambem estiver ilegivel, devolve None e o pacote e so
+    descartado (o cliente recupera pelo timeout).
+    """
+    try:
+        tipo, campos, _ = desmontar_pacote(texto)
+        seq = int(campos["SEQ"])
+    except (ValueError, KeyError, IndexError):
+        return None
+    if tipo != TIPO_DADOS or not 0 <= seq < total_maximo:
+        return None
+    return seq
 
 
 def aguardar_confirmacao_final(sock, endereco_cliente, total):
@@ -131,9 +148,22 @@ if aceito:
             continue
 
         try:
-            tipo, campos, payload = desmontar_pacote_integro(dados.decode())
-        except (UnicodeDecodeError, ValueError, IndexError) as erro:
-            print(f"Pacote veio estranho, ignorando: {erro}")
+            texto_pacote = dados.decode()
+        except UnicodeDecodeError:
+            print("Pacote com bytes invalidos, ignorando")
+            continue
+
+        try:
+            tipo, campos, payload = desmontar_pacote_integro(texto_pacote)
+        except (ValueError, IndexError) as erro:
+            seq_corrompido = seq_de_pacote_corrompido(texto_pacote, total_maximo)
+            if seq_corrompido is None:
+                print(f"Pacote veio estranho, ignorando: {erro}")
+                continue
+            print(f"[ERRO] SEQ={seq_corrompido} {erro} PACOTE={texto_pacote}")
+            confirmacao = montar_pacote_integro(TIPO_NACK, {"SEQ": seq_corrompido, "JANELA": JANELA_DEFAULT})
+            sock_servidor.sendto(confirmacao.encode(), endereco_cliente)
+            print(f"Enviado: {confirmacao}")
             continue
 
         if tipo == TIPO_FIM:
