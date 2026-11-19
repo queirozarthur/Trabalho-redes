@@ -17,6 +17,12 @@ Aplicação cliente-servidor desenvolvida em Python utilizando **sockets UDP**.
 
 ## Como executar
 
+Cliente e servidor precisam da mesma chave AES-128 (32 dígitos hexadecimais) na variável `REDES_CHAVE_HEX`, nos dois terminais:
+
+```bash
+export REDES_CHAVE_HEX=000102030405060708090a0b0c0d0e0f   # Windows (PowerShell): $env:REDES_CHAVE_HEX="..."
+```
+
 Primeiro, execute o servidor:
 
 ```bash
@@ -301,5 +307,83 @@ Testar as combinações `INDIVIDUAL` com `GBN`, `INDIVIDUAL` com `SR`, `LOTE` co
 ### Relatório / Diário de Aprendizagem - Entrega 2 ⬇️:
 [![Read the Docs](https://img.shields.io/badge/Read%20the%20Docs-%23000000.svg?style=for-the-badge&logo=readthedocs&logoColor=white)](https://docs.google.com/document/d/14YuWAADZoo1_Yew4jUXleHoKpS7cJTkm0xCJR6xuW94/edit?usp=sharing)
 </details>
+
+</details>
+
+<details open>
+<summary>Entrega 3</summary>
+
+## Entrega 3 — Inserção de erros e perdas
+
+### Simulador de erros (lado cliente)
+
+Depois de digitar o texto, o cliente pergunta quais falhas devem acontecer. O erro é **determinístico**: o usuário escolhe exatamente qual `SEQ` sofre qual falha, e o mesmo cenário sempre gera o mesmo resultado. A lógica fica em [`simulador.py`](./simulador.py).
+
+| Pergunta | Formato | O que acontece |
+|---|---|---|
+| `Perder DADOS dos SEQs` | `2,5` ou `2:3` | O pacote não é enviado pelo socket |
+| `Corromper DADOS dos SEQs` | `2,5` ou `2:3` | Um caractere do payload é trocado depois do checksum calculado |
+| `Descartar ACK/NACK com SEQ` | `2,5` ou `2:3` | O cliente descarta a confirmação recebida, como se ela tivesse se perdido |
+| `Perder FIM quantas vezes` | número | O `FIM` não é enviado nessas tentativas |
+| `Descartar FIM_ACK quantas vezes` | número | O cliente descarta o `FIM_ACK` recebido |
+
+`SEQ:VEZES` faz a falha se repetir nas primeiras `VEZES` transmissões daquele pacote (ex.: `3:2` perde o SEQ 3 na transmissão original e na primeira retransmissão). Enter deixa a falha desligada.
+
+### Comportamento do protocolo diante de cada falha
+
+| Falha | Detecção | GBN | SR |
+|---|---|---|---|
+| DADOS corrompido | Servidor recalcula o checksum → `NACK;SEQ=n` | Cliente reenvia toda a janela `[base, próximo)` | Cliente reenvia só o SEQ `n` |
+| DADOS perdido | Servidor vê buraco na sequência; cliente estoura o temporizador | Servidor descarta os seguintes (fora de ordem) e repete o ACK cumulativo; no timeout o cliente volta N | Servidor guarda os seguintes no buffer; só o SEQ perdido expira e é reenviado |
+| ACK perdido | Temporizador do cliente | O próximo ACK cumulativo cobre o perdido (pode nem haver retransmissão) | O SEQ expira e é reenviado; servidor marca `[DUPLICADO]` e reenvia o ACK |
+| Pacote duplicado | Servidor já tem o SEQ | Reenvia o ACK cumulativo, não entrega de novo | Reenvia o ACK individual, não entrega de novo |
+| NACK atrasado | SEQ fora de `[base, próximo)` | Ignorado | Ignorado |
+| FIM perdido | Timeout do cliente | Cliente reenvia `FIM` | Igual |
+| FIM_ACK perdido | Timeout do cliente | Cliente reenvia `FIM`; servidor reenvia `FIM_ACK` | Igual |
+
+Se o checksum falha e nem o cabeçalho pode ser lido, o servidor só descarta o pacote e a recuperação acontece pelo temporizador.
+
+### Janela dinâmica (1 a 5)
+
+O servidor começa com `JANELA=5` e anuncia o valor atual em todo `ACK`/`NACK`:
+
+- **erro detectado** (checksum inválido ou buraco na sequência): janela cai pela metade, mínimo 1 — o buraco só conta uma vez;
+- **pacote novo entregue em ordem**: janela cresce 1, máximo 5.
+
+O cliente adota a janela recebida (`[JANELA] servidor ajustou a janela: 5 -> 2`). No modo `INDIVIDUAL` ele continua enviando um pacote por vez. O buffer de recepção do SR mantém capacidade fixa de 5, então pacotes que já estavam em trânsito quando a janela diminuiu não são perdidos.
+
+### Roteiro de demonstração
+
+Texto de exemplo com 30 caracteres: `ola mundo, isso e um teste!!` (7 fragmentos, SEQ 0 a 6).
+
+| Cenário | Modo / Controle | Respostas do simulador (na ordem) |
+|---|---|---|
+| Caminho sem erros | qualquer | Enter em todas |
+| Corrupção → NACK | `LOTE` / `GBN` e depois `SR` | corromper `1` |
+| Perda → timeout | `LOTE` / `GBN` e depois `SR` | perder `2` |
+| Perda repetida | `INDIVIDUAL` / `SR` | perder `3:2` |
+| ACK perdido | `LOTE` / `GBN` (cumulativo cobre) e `SR` (duplicado) | descartar ACK `3` |
+| Janela variando | `LOTE` / `SR`, texto de 60 caracteres | perder `2`, corromper `6` |
+| Encerramento com perdas | qualquer | perder FIM `1`, descartar FIM_ACK `1` |
+| Tudo junto | qualquer | `1:2`, `3`, `5`, `1`, `1` |
+
+As quatro combinações (`INDIVIDUAL`/`LOTE` × `GBN`/`SR`) foram testadas sem erros (nenhuma retransmissão) e com todas as falhas ligadas ao mesmo tempo; em todos os casos o servidor montou o texto correto e o encerramento foi concluído.
+
+### Pontuação extra
+
+- **Checksum manual** ([`checksum.py`](./checksum.py)): soma em complemento de 1 de palavras de 16 bits, sem biblioteca. Cobre cabeçalho e payload.
+- **Criptografia simétrica manual** ([`criptografia.py`](./criptografia.py)): AES-128 em modo CTR implementado à mão (S-box, expansão de chave, ShiftRows, MixColumns). Cada fragmento é cifrado com `nonce + SEQ` como contador, então uma retransmissão gera exatamente o mesmo pacote cifrado.
+
+### Arquivos alterados
+
+- [`simulador.py`](./simulador.py) — novo: leitura do cenário e aplicação das falhas.
+- [`cliente.py`](./cliente.py) — aplica as falhas no envio de DADOS/FIM e no recebimento de ACK/NACK/FIM_ACK, adota a janela do servidor e ignora NACK fora da janela.
+- [`servidor.py`](./servidor.py) — envia NACK quando o checksum falha, identifica duplicados, guarda fora de ordem no SR e controla a janela dinâmica.
+
+### Análise crítica (para o diário de IA)
+
+- Ao testar a corrupção, vimos que o servidor da Entrega 2 **não enviava NACK** quando o checksum falhava: a exceção era tratada como "pacote estranho" e descartada, e a recuperação só acontecia pelo timeout — embora o README dissesse que havia NACK. A correção lê o `SEQ` do cabeçalho do pacote corrompido para responder `NACK;SEQ=n`.
+- Na primeira versão do descarte de ACK, o simulador comparava o `SEQ` recebido (string `"3"`) com as chaves do cenário (inteiro `3`), e a falha nunca disparava. O teste mostrou o problema; `consumir()` passou a converter para inteiro.
+- O servidor da Entrega 2 aceitava um SEQ repetido no SR sem avisar. Agora ele registra `[DUPLICADO]`, que é o que permite mostrar na apresentação o efeito de um ACK perdido.
 
 </details>

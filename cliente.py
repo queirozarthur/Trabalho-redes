@@ -2,6 +2,7 @@ import secrets
 import socket
 import time
 
+import simulador
 from criptografia import aplicar_fragmento, expandir_chave
 from config import (
     CRIPTOGRAFIA,
@@ -29,9 +30,17 @@ from protocolo_mensagem import (
 
 
 def enviar_dados(sock, seq, pacote, retransmissao=False):
-    sock.sendto(pacote.encode(), ENDERECO_SERVIDOR)
-
     rotulo = "[RETRANSMISSAO]" if retransmissao else "[DADOS]"
+
+    if simulador.consumir(cenario["perder_dados"], seq):
+        print(f"{rotulo} SEQ={seq} [SIMULADO: PERDIDO] pacote nao saiu do cliente")
+        return
+
+    if simulador.consumir(cenario["corromper_dados"], seq):
+        pacote = simulador.corromper(pacote)
+        rotulo += " [SIMULADO: CORROMPIDO]"
+
+    sock.sendto(pacote.encode(), ENDERECO_SERVIDOR)
     print(f"{rotulo} SEQ={seq} PACOTE={pacote}")
 
 
@@ -43,6 +52,10 @@ def receber_controle(sock):
     try:
         tipo, campos, _ = desmontar_pacote_integro(dados.decode())
     except (UnicodeDecodeError, ValueError, IndexError):
+        return None, {}
+
+    if tipo in (TIPO_ACK, TIPO_NACK) and simulador.consumir(cenario["perder_ack"], campos.get("SEQ")):
+        print(f"[{tipo}] {campos} [SIMULADO: PERDIDO] confirmacao descartada")
         return None, {}
 
     print(f"[{tipo}] {campos}")
@@ -113,6 +126,8 @@ if tipo == "TUDO_BEM_SIM":
         else:
             break
 
+    cenario = simulador.configurar()
+
     fragmentos = fragmentar(texto, PAYLOAD_MAX)
     pacotes = []
     for seq, fragmento in enumerate(fragmentos):
@@ -179,10 +194,15 @@ if tipo == "TUDO_BEM_SIM":
             print(f"Confirmacao veio estranha, ignorando: {campos}")
             continue
 
-        janela = max(1, min(JANELA_DEFAULT, janela_recebida))
+        janela_nova = max(1, min(JANELA_DEFAULT, janela_recebida))
+        if janela_nova != janela:
+            print(f"[JANELA] servidor ajustou a janela: {janela} -> {janela_nova}")
+        janela = janela_nova
 
         if tipo == TIPO_NACK:
-            if ack_cumulativo:
+            if not base <= seq_confirmado < proximo:
+                print(f"NACK SEQ={seq_confirmado} fora da janela [{base}, {proximo - 1}], ignorando")
+            elif ack_cumulativo:
                 retransmitir(sock_cliente, range(base, proximo), pendentes, tempos_envio)
                 temporizador_gbn = time.monotonic()
             elif seq_confirmado in pendentes:
@@ -213,8 +233,11 @@ if tipo == "TUDO_BEM_SIM":
     fim_confirmado = False
 
     while not fim_confirmado:
-        sock_cliente.sendto(fim.encode(), ENDERECO_SERVIDOR)
-        print(f"[FIM] TOTAL={total}")
+        if simulador.consumir_vez(cenario, "perder_fim"):
+            print(f"[FIM] TOTAL={total} [SIMULADO: PERDIDO] pacote nao saiu do cliente")
+        else:
+            sock_cliente.sendto(fim.encode(), ENDERECO_SERVIDOR)
+            print(f"[FIM] TOTAL={total}")
         prazo = time.monotonic() + TIMEOUT
 
         while time.monotonic() < prazo:
@@ -225,6 +248,10 @@ if tipo == "TUDO_BEM_SIM":
                 break
 
             if tipo != TIPO_FIM_ACK:
+                continue
+
+            if simulador.consumir_vez(cenario, "perder_fim_ack"):
+                print("[SIMULADO: PERDIDO] FIM_ACK descartado")
                 continue
 
             try:
