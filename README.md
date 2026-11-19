@@ -380,10 +380,7 @@ As quatro combinações (`INDIVIDUAL`/`LOTE` × `GBN`/`SR`) foram testadas sem e
 - [`cliente.py`](./cliente.py) — aplica as falhas no envio de DADOS/FIM e no recebimento de ACK/NACK/FIM_ACK, adota a janela do servidor e ignora NACK fora da janela.
 - [`servidor.py`](./servidor.py) — envia NACK quando o checksum falha, identifica duplicados, guarda fora de ordem no SR e controla a janela dinâmica.
 
-### Análise crítica (para o diário de IA)
-
-- Ao testar a corrupção, vimos que o servidor da Entrega 2 **não enviava NACK** quando o checksum falhava: a exceção era tratada como "pacote estranho" e descartada, e a recuperação só acontecia pelo timeout — embora o README dissesse que havia NACK. A correção lê o `SEQ` do cabeçalho do pacote corrompido para responder `NACK;SEQ=n`.
-- Na primeira versão do descarte de ACK, o simulador comparava o `SEQ` recebido (string `"3"`) com as chaves do cenário (inteiro `3`), e a falha nunca disparava. O teste mostrou o problema; `consumir()` passou a converter para inteiro.
-- O servidor da Entrega 2 aceitava um SEQ repetido no SR sem avisar. Agora ele registra `[DUPLICADO]`, que é o que permite mostrar na apresentação o efeito de um ACK perdido.
+### Relatório de uso de IA - Entrega 3 ⬇️:
+[![Read the Docs](https://img.shields.io/badge/Read%20the%20Docs-%23000000.svg?style=for-the-badge&logo=readthedocs&logoColor=white)](https://docs.google.com/document/d/1iONyLPznveY2K_jbqR8w5DXDMK3WHwpCQvqQWYjuhWc/edit?usp=sharing)
 
 </details>
