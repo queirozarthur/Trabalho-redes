@@ -380,7 +380,125 @@ As quatro combinações (`INDIVIDUAL`/`LOTE` × `GBN`/`SR`) foram testadas sem e
 - [`cliente.py`](./cliente.py) — aplica as falhas no envio de DADOS/FIM e no recebimento de ACK/NACK/FIM_ACK, adota a janela do servidor e ignora NACK fora da janela.
 - [`servidor.py`](./servidor.py) — envia NACK quando o checksum falha, identifica duplicados, guarda fora de ordem no SR e controla a janela dinâmica.
 
+<details>
+<summary>Relatório - Entrega 3</summary>
+
+# Relatório de Implementação — Inserção de Erros e Perdas
+
+## 1. Objetivo
+
+Inserir erros e perdas simulados na comunicação entre cliente e servidor e implementar o comportamento correto do protocolo diante de cada falha. Todas as situações tratadas pelo protocolo (pacote corrompido, pacote perdido, confirmação perdida, pacote duplicado e perdas no encerramento) devem poder ser demonstradas, tanto no Go-Back-N quanto na Repetição Seletiva, nos modos `INDIVIDUAL` e `LOTE`.
+
+## 2. O que foi feito
+
+- Criação de um simulador de erros **determinístico** no lado cliente (`simulador.py`), configurado antes do envio do texto.
+- Simulação de cinco tipos de falha:
+  - perda de pacotes `DADOS`;
+  - corrupção de pacotes `DADOS` (o payload é alterado depois do checksum calculado);
+  - perda de `ACK`/`NACK` (o cliente descarta a confirmação recebida);
+  - perda do `FIM`;
+  - perda do `FIM_ACK`.
+- Possibilidade de repetir a falha em várias transmissões do mesmo pacote com a sintaxe `SEQ:VEZES`.
+- Envio de `NACK` pelo servidor quando o checksum de um `DADOS` não confere.
+- Identificação de pacotes duplicados no servidor, que reenvia a confirmação sem entregar o fragmento de novo.
+- Tratamento de pacotes fora de ordem: descartados no GBN e guardados em buffer no SR.
+- Janela dinâmica de 1 a 5 controlada pelo servidor e anunciada em todo `ACK`/`NACK`.
+- Cliente passa a ignorar `NACK` de `SEQ` fora da janela de envio (NACK atrasado).
+- Checksum passou a cobrir cabeçalho e payload, e todas as mensagens depois do handshake (`ACK`, `NACK`, `FIM`, `FIM_ACK`, `FIM_CONFIRM`) também carregam `CHK`.
+- Implementação manual de criptografia simétrica AES-128 em modo CTR (`criptografia.py`), integrada aos fragmentos, para a pontuação extra.
+
+## 3. Como cheguei lá / decisões tomadas
+
+**Simulador no cliente.** A especificação pede que o erro seja inserido no lado cliente e verificado pelo servidor. Por isso todas as falhas ficam no cliente: a perda de `DADOS`/`FIM` é feita simplesmente não chamando o `sendto`, e a perda de `ACK`/`NACK`/`FIM_ACK` é feita descartando a mensagem logo depois do `recvfrom`, como se ela não tivesse chegado. Assim o servidor não sabe que existe um simulador e reage só ao que recebe.
+
+**Erro determinístico.** O usuário escolhe exatamente qual `SEQ` sofre qual falha. Cada falha é "consumida" quando acontece, então a retransmissão seguinte passa normalmente (a não ser que `VEZES` seja maior que 1). Com isso o mesmo cenário sempre gera o mesmo resultado, o que facilita a demonstração para os monitores.
+
+**Corrupção.** O simulador troca o último caractere do pacote depois do checksum já calculado. O servidor recalcula o checksum, vê que não bate e responde `NACK` com o `SEQ` do pacote. Se o cabeçalho também ficar ilegível e não der para saber o `SEQ`, o servidor só descarta o pacote e a recuperação fica por conta do temporizador do cliente.
+
+**Comportamento por controle:**
+
+- **GBN:** o servidor aceita apenas o `SEQ` esperado. Pacotes fora de ordem são descartados e o servidor repete o último `ACK` cumulativo. Em caso de `NACK` ou timeout, o cliente reenvia toda a janela `[base, próximo)`. Um `ACK` perdido geralmente nem causa retransmissão, porque o `ACK` cumulativo seguinte já cobre o perdido.
+- **SR:** o servidor guarda no buffer os pacotes que chegam fora de ordem e confirma cada um individualmente. Cada pacote tem seu próprio temporizador no cliente, então só o `SEQ` que expirou ou recebeu `NACK` é reenviado. Quando um `ACK` se perde, o pacote é retransmitido, o servidor marca `[DUPLICADO]` e reenvia o `ACK`.
+
+**Janela dinâmica.** O servidor começa com `JANELA=5`. Quando detecta um erro (checksum inválido ou buraco na sequência), a janela cai pela metade, com mínimo 1. Cada pacote novo entregue em ordem faz a janela crescer 1, até o máximo de 5. O mesmo buraco só reduz a janela uma vez, para ela não cair a cada pacote fora de ordem que chega depois. O buffer do SR manteve capacidade fixa de 5 para que pacotes que já estavam em trânsito quando a janela diminuiu não sejam perdidos.
+
+**Encerramento com perdas.** Se o `FIM` ou o `FIM_ACK` se perde, o cliente estoura o temporizador e reenvia o `FIM`. O servidor, ao receber o `FIM` de novo, reenvia o `FIM_ACK`, até chegar o `FIM_CONFIRM`.
+
+**Criptografia.** O AES-128 foi implementado à mão (S-box, expansão de chave, ShiftRows, MixColumns e AddRoundKey) e usado em modo CTR. O contador de cada fragmento é `nonce + SEQ`, então uma retransmissão gera exatamente o mesmo pacote cifrado. O `nonce` é gerado pelo cliente e trocado no handshake junto com o campo `CRIPTO=AES128-CTR`; a chave fica na variável de ambiente `REDES_CHAVE_HEX`, que precisa ser igual nos dois lados.
+
+## 4. Arquivos alterados
+
+- [`simulador.py`](./simulador.py) — novo: lê o cenário de falhas digitado pelo usuário e decide quando cada falha acontece.
+- [`cliente.py`](./cliente.py) — aplica as falhas no envio de `DADOS`/`FIM` e no recebimento de `ACK`/`NACK`/`FIM_ACK`, adota a janela anunciada pelo servidor, ignora `NACK` fora da janela e cifra os fragmentos.
+- [`servidor.py`](./servidor.py) — envia `NACK` quando o checksum falha, identifica duplicados, descarta (GBN) ou guarda (SR) pacotes fora de ordem, controla a janela dinâmica e decifra os fragmentos.
+- [`protocolo_mensagem.py`](./protocolo_mensagem.py) — novas funções para montar e validar pacotes com checksum sobre cabeçalho e payload.
+- [`checksum.py`](./checksum.py) — passou a aceitar bytes, para calcular o checksum do pacote inteiro.
+- [`criptografia.py`](./criptografia.py) — novo: AES-128 e modo CTR implementados manualmente.
+- [`config.py`](./config.py) — leitura da chave AES (`carregar_chave()`) e constante `CRIPTOGRAFIA`.
+
+## 5. Principais funções
+
+Em [`simulador.py`](./simulador.py):
+
+- `configurar()` pergunta ao usuário quais falhas devem acontecer e monta o cenário.
+- `ler_falhas()` interpreta entradas como `2,5` ou `3:2`.
+- `consumir()` e `consumir_vez()` dizem se a falha deve acontecer agora e descontam uma ocorrência.
+- `corromper()` altera um caractere do pacote mantendo o checksum original.
+
+Em [`cliente.py`](./cliente.py):
+
+- `enviar_dados()` passa pelo simulador antes do envio (perde, corrompe ou envia normalmente).
+- `receber_controle()` passa pelo simulador depois do recebimento (descarta `ACK`/`NACK` quando configurado).
+- `retransmitir()` reenvia os pacotes pendentes e reinicia seus temporizadores.
+
+Em [`servidor.py`](./servidor.py):
+
+- `reduzir_janela()` e `aumentar_janela()` controlam a janela dinâmica.
+- `sinalizar_buraco()` reduz a janela uma única vez por buraco na sequência.
+- `seq_de_pacote_corrompido()` tenta ler o `SEQ` de um pacote com checksum inválido para poder mandar o `NACK`.
+- `aguardar_confirmacao_final()` reenvia o `FIM_ACK` se o `FIM` chegar de novo.
+
+Em [`protocolo_mensagem.py`](./protocolo_mensagem.py):
+
+- `montar_pacote_integro()` monta o pacote e acrescenta o `CHK` calculado sobre cabeçalho e payload.
+- `desmontar_pacote_integro()` interpreta o pacote e gera erro se o checksum não conferir.
+
+Em [`criptografia.py`](./criptografia.py):
+
+- `expandir_chave()` gera as 11 chaves de rodada do AES-128.
+- `cifrar_bloco()` cifra um bloco de 16 bytes.
+- `aplicar_fragmento()` cifra/decifra um fragmento em modo CTR usando `nonce + SEQ` como contador.
+
+## 6. Como testar/validar
+
+Nos dois terminais, definir a mesma chave:
+
+```bash
+export REDES_CHAVE_HEX=000102030405060708090a0b0c0d0e0f
+```
+
+Primeiro, executar o servidor:
+
+```bash
+python servidor.py
+```
+
+Em outro terminal, executar:
+
+```bash
+python cliente.py
+```
+
+Depois de informar modo, controle, tamanho e texto, o cliente pergunta as falhas a simular (Enter deixa a falha desligada). Com o texto `ola mundo, isso e um teste!!` (7 fragmentos, SEQ 0 a 6), os cenários do roteiro de demonstração acima podem ser reproduzidos. Alguns resultados observados:
+
+- **`LOTE`/`GBN`, corromper `1` e perder `2`:** o servidor responde `NACK;SEQ=1` e reduz a janela de 5 para 2; os SEQs 3, 4 e 5 chegam fora de ordem, são descartados e a janela cai para 1. O cliente reenvia a janela inteira (SEQ 1 a 5) e, conforme os pacotes são entregues em ordem, a janela volta a crescer até 5.
+- **`LOTE`/`SR`, perder `2`:** os SEQs 3 a 6 ficam guardados no buffer do servidor (`guardado no buffer (aguardando SEQ=2)`), e o cliente reenvia apenas o SEQ 2 quando o temporizador dele expira.
+- **Todas as falhas ao mesmo tempo** (`1:2`, `3`, `5`, `1`, `1`): testado nas quatro combinações (`INDIVIDUAL`/`LOTE` × `GBN`/`SR`). Em todas, o servidor montou o texto correto e o encerramento `FIM` → `FIM_ACK` → `FIM_CONFIRM` foi concluído mesmo com a perda do `FIM` e do `FIM_ACK`.
+
+Também foi verificado o caminho sem erros (Enter em todas as perguntas do simulador) nas quatro combinações, sem nenhuma retransmissão.
+
 ### Relatório de uso de IA - Entrega 3 ⬇️:
 [![Read the Docs](https://img.shields.io/badge/Read%20the%20Docs-%23000000.svg?style=for-the-badge&logo=readthedocs&logoColor=white)](https://docs.google.com/document/d/1iONyLPznveY2K_jbqR8w5DXDMK3WHwpCQvqQWYjuhWc/edit?usp=sharing)
+</details>
 
 </details>
